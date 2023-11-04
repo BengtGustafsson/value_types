@@ -2,7 +2,7 @@
 
 ISO/IEC JTC1 SC22 WG21 Programming Language C++
 
-P3019R0
+D3019R1
 
 Working Group: Library Evolution, Library
 
@@ -99,7 +99,7 @@ indirect storage is required.
 ### `const` propagation
 
 When composite objects contain `pointer`, `unique_ptr` or `shared_ptr` members
-they allow non-const access to ther respective pointees when accessed through a
+they allow non-const access to their respective pointees when accessed through a
 const access path. This prevents the compiler from eliminating a source of
 const-correctness bugs and makes it difficult to reason about the
 const-correctness of a composite object.
@@ -346,9 +346,6 @@ class indirect {
 };
 
 template <class T, class Alloc>
-struct std::uses_allocator<indirect<T, Alloc>, Alloc> : true_type {};
-
-template <class T, class Alloc>
 struct hash<indirect<T, Alloc>>;
 ```
 
@@ -409,8 +406,7 @@ constexpr indirect(
   std::allocator_arg_t, const Allocator& alloc, const indirect& other);
 ```
 
-* _Constraints_: `is_copy_constructible_v<T>` is true and `uses_allocator<T,
-  Allocator>` is true.
+* _Constraints_: `is_copy_constructible_v<T>` is true.
 
 * _Preconditions_: `other` is not valueless and `Allocator` meets the
   _Cpp17Allocator_ requirements.
@@ -438,8 +434,7 @@ constexpr indirect(
   std::allocator_arg_t, const Allocator& alloc, indirect&& other) noexcept;
 ```
 
-* _Constraints_: `is_copy_constructible_v<T>` is true and `uses_allocator<T,
-  Allocator>` is true.
+* _Constraints_: `is_copy_constructible_v<T>` is true.
 
 * _Preconditions_: `other` is not valueless and `Allocator` meets the
   _Cpp17Allocator_ requirements.
@@ -667,16 +662,9 @@ constexpr auto operator<=>(const U& lhs, const indirect<T, A>& rhs);
 * _Remarks_: Specializations of this function template for which `*lhs <=> *rhs`
   is a core constant expression, are constexpr functions.
 
-#### X.Y.10 Allocator related traits [indirect.allocator.traits]
-
-```c++
-template <class T, class Alloc>
-struct std::uses_allocator<indirect<T>, Alloc> : true_type {};
-```
-
 * _Preconditions_: Alloc meets the _Cpp17Allocator_ requirements.
 
-#### X.Y.11 Hash support [indirect.hash]
+#### X.Y.10 Hash support [indirect.hash]
   
 ```c++
 template <class T, class Alloc>
@@ -714,6 +702,34 @@ constexpr indirect<T, Alloc>& operator->() noexcept;
   reference to the contained `indirect`.
 
 Otherwise, the interface of the specialization is as defined in [optional].
+
+#### X.Y.13 Formatter support [indirect.fmt]
+
+```c++
+// [indirect.fmt]
+template <class T, class Alloc, class charT>
+struct std::formatter<indirect<T, Alloc>, charT> : std::formatter<T, charT> {
+  template<class ParseContext>
+  constexpr typename ParseContext::iterator parse(ParseContext& ctx);
+
+  template<class FormatContext>
+  typename FormatContext::iterator format(
+    indirect<T, Alloc> const& value, FormatContext& ctx) const;
+};
+```
+
+Specialization of `std::formatter<indirect<T, Alloc>, charT>` when the underlying
+`T` supports specialisation of `std::formatter<T, charT>`.
+
+* Preconditions: The specialization `formatter<T, charT>` meets the _Formatter_ requirements.
+
+## Feature-test Macro [indirect.predefined.ft]
+
+Add a new feature-test macro:
+
+```c++
+#define __cpp_lib_indirect 2023XXL
+```
 
 ### X.Z Class template polymorphic [polymorphic]
 
@@ -782,9 +798,6 @@ class polymorphic {
 
   friend constexpr void swap(polymorphic& lhs, polymorphic& rhs) noexcept(see below);
 };
-
-template <class T, class Alloc>
-struct std::uses_allocator<polymorphic<T, Alloc>, Alloc> : true_type {};
 ```
 
 #### X.Z.3 Constructors [polymorphic.ctor]
@@ -980,16 +993,7 @@ constexpr void swap(polymorphic& lhs, polymorphic& rhs) noexcept(
 
 * _Effects_: Swaps the objects owned by `lhs` and `rhs`.
 
-#### X.Z.8 Allocator related traits [polymorphic.traits]
-
-```c++
-template <class T, class Alloc>
-struct std::uses_allocator<polymorphic<T>, Alloc> : true_type {};
-```
-
-* _Preconditions_: Alloc meets the _Cpp17Allocator_ requirements.
-
-#### X.Z.9 Optional support [polymorphic.optional]
+#### X.Z.8 Optional support [polymorphic.optional]
 
 ```c++
 template <class T, class Alloc>
@@ -1012,6 +1016,14 @@ constexpr polymorphic<T, Alloc>& operator->() noexcept;
   reference to the contained `polymorphic`.
 
 Otherwise, the interface of the specialization is as defined in [optional].
+
+## Feature-test Macro [polymorphic.predefined.ft]
+
+Add a new feature-test macro:
+
+```c++
+#define __cpp_lib_polymorphic 2023XXL
+```
 
 ## Reference implementation
 
@@ -1180,3 +1192,180 @@ not possible to add a small object optimization to `polymorphic` without making
 breaking changes. There may be a case for the addition of `small_polymorphic<T,
 N>` similar to `llvm::SmallVector<T, N>`, but we are not proposing its addition
 here.
+
+## Appendix B: Before and after examples
+
+We include some minimal, illustrative examples of how `indirect` and
+`polymorphic` can be used to simplify composite class design.
+
+### Using `indirect` for binary compatibility using the PIMPL idiom
+
+Without using `indirect` we use `std::unique_ptr` to manage the lifetime of the
+implementation object. All const-qualified methods of the composite will need to
+be manually checked to ensure that they are not calling non-const qualified
+methods of component objects.
+
+#### Before, without using `indirect`
+
+```c++
+// Class.h
+
+class Class {
+  class Impl;
+  std::unique_ptr<Impl> impl_;
+ public:
+  Class();
+  ~Class();
+  Class(const Class&);
+  Class& operator=(const Class&);
+  Class(Class&&) noexcept = default;
+  Class& operator=(Class&&) noexcept = default;
+  
+  void do_something();
+};
+```
+
+```c++
+// Class.cpp
+
+class Impl {
+ public:
+  void do_something();
+};
+
+Class::Class() : impl_(std::make_unique<Impl>()) {}
+
+Class::~Class() = default;
+
+Class::Class(const Class& other) : impl_(std::make_unique<Impl>(*other.impl_)) {}
+
+Class& Class::operator=(const Class& other) {
+  if (this != &other) {
+    Class tmp(other);
+    using std::swap;
+    swap(*this, tmp);
+  }
+  return *this;
+}
+
+void Class::do_something() {
+  impl_->do_something();
+}
+```
+
+#### After, using `indirect`
+
+```c++
+// Class.h
+
+class Class {
+  class Impl;
+  indirect<Impl> impl_;
+ public:
+  Class();
+  ~Class();
+  Class(const Class&);
+  Class& operator=(const Class&);
+  Class(Class&&) noexcept = default;
+  Class& operator=(Class&&) noexcept = default;
+  
+  void do_something();
+};
+```
+
+```c++
+// Class.cpp
+
+class Impl {
+ public:
+  void do_something();
+};
+
+Class::Class() : impl_(indirect<Impl>()) {}
+Class::~Class() = default;
+Class::Class(const Class&) = default;
+Class& Class::operator=(const Class&) = default;
+
+void Class::do_something() {
+  impl_->do_something();
+}
+```
+
+### Using `polymorphic` for a composite class
+
+Without using `polymorphic` we use `std::unique_ptr` to manage the lifetime of
+component objects. All const-qualified methods of the composite will need to be
+manually checked to ensure that they are not calling non-const qualified methods
+of component objects.
+
+#### Before, without using `polymorphic`
+
+```c++
+class Canvas;
+
+class Shape {
+ public:
+  virtual ~Shape() = default;
+  virtual std::unique_ptr<Shape> clone() = 0;
+  virtual void draw(Canvas&) const = 0;
+};
+
+class Picture {
+  std::vector<std::unique_ptr<Shape>> shapes_;
+
+ public:
+  Picture(const std::vector<std::unique_ptr<Shape>>& shapes) {
+    shapes_.reserve(shapes.size());
+    for (auto& shape : shapes) {
+      shapes_.push_back(shape->clone());
+    }
+  }
+
+  Picture(const Picture& other) {
+    shapes_.reserve(other.shapes_.size());
+    for (auto& shape : other.shapes_) {
+      shapes_.push_back(shape->clone());
+    }
+  }
+
+  Picture& operator=(const Picture& other) {
+    if (this != &other) {
+      Picture tmp(other);
+      using std::swap;
+      swap(*this, tmp);
+    }
+    return *this;
+  }
+
+  void draw(Canvas& canvas) const;
+};
+
+```
+
+#### After, using `polymorphic`
+  
+```c++
+class Canvas;
+
+class Shape {
+ protected:
+  ~Shape() = default;
+
+ public:
+  virtual void draw(Canvas&) const = 0;
+};
+
+class Picture {
+  std::vector<polymorphic<Shape>> shapes_;
+
+ public:
+  Picture(const std::vector<polymorphic<Shape>>& shapes)
+      : shapes_(shapes) {}
+
+  // Picture(const Picture& other) = default;
+
+  // Picture& operator=(const Picture& other) = default;
+
+  void draw(Canvas& canvas) const;
+};
+```

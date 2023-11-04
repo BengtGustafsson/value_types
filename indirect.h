@@ -1,4 +1,5 @@
 /* Copyright (c) 2016 The Value Types Authors. All Rights Reserved.
+
 Permission is hereby granted, free of charge, to any person obtaining a copy of
 this software and associated documentation files (the "Software"), to deal in
 the Software without restriction, including without limitation the rights to
@@ -25,6 +26,10 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #include <concepts>
 #include <memory>
 #include <utility>
+
+#if __has_include(<format>)
+#include <format>
+#endif
 
 namespace xyz {
 
@@ -333,14 +338,37 @@ concept is_hashable = requires(T t) { std::hash<T>{}(t); };
 }  // namespace xyz
 
 template <class T, class Alloc>
-struct std::uses_allocator<xyz::indirect<T, Alloc>, Alloc> : true_type {};
-
-template <class T, class Alloc>
   requires xyz::is_hashable<T>
 struct std::hash<xyz::indirect<T, Alloc>> {
   constexpr std::size_t operator()(const xyz::indirect<T, Alloc>& key) const {
     return std::hash<typename xyz::indirect<T, Alloc>::value_type>{}(*key);
   }
 };
+
+#if (__cpp_lib_format >= 201907L)
+
+namespace xyz {
+
+template <class T, class charT>
+concept is_formattable = requires(T t) { std::formatter<T, charT>{}; };
+
+}  // namespace xyz
+
+template <class T, class Alloc, class charT>
+  requires xyz::is_formattable<T, charT>
+struct std::formatter<xyz::indirect<T, Alloc>, charT> : std::formatter<T, charT> {
+  template <class ParseContext>
+  constexpr auto parse(ParseContext& ctx) -> typename ParseContext::iterator {
+    return std::formatter<T, charT>::parse(ctx);
+  }
+
+  template <class FormatContext>
+  auto format(xyz::indirect<T, Alloc> const& value, FormatContext& ctx) const ->
+      typename FormatContext::iterator {
+    return std::formatter<T, charT>::format(*value, ctx);
+  }
+};
+
+#endif  // __cpp_lib_format >= 201907L
 
 #endif  // XYZ_INDIRECT_H
